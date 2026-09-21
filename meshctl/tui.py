@@ -107,6 +107,11 @@ class Tui:
         self.rooms[self.room_key(serial, peer)][:] = self.rooms[self.room_key(serial, peer)][-200:]
         self.say(text, style)
 
+    def say(self, text: str, style: str = "paper") -> None:
+        """Append one log line, capped."""
+        self.log.append((style, text[:300]))
+        del self.log[:-500]
+
     def pump(self) -> None:
         """Drain the bus into the log with contact names resolved."""
         for event in self.bus.poll():
@@ -291,6 +296,7 @@ class Tui:
         key = self.room_key(board.serial, target) if board is not None and target else None
         room = self.rooms.get(key, []) if key is not None else self.log
         visible = room[-(h - 5):] if key is not None else self.log[-(h - 5):]
+        styles = {"amber": 3, "moss": 4, "fault": 5, "paper": 1, "dim": 6}
         for i, (style, text) in enumerate(visible):
             try:
                 stdscr.addstr(1 + i, 26, text[: w - 27], curses.color_pair(styles.get(style, 1)))
