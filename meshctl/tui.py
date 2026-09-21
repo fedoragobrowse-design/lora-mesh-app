@@ -364,7 +364,7 @@ def _run(stdscr: object, known: dict) -> int:
                 if (tui.known[s].label or "?") == want:
                     tui.current = i
                     break
-        elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+        elif key in (curses.KEY_LEFT, curses.KEY_RIGHT) and not tui.input:
             board = tui.board()
             if board is not None:
                 names = tui.names(board)
