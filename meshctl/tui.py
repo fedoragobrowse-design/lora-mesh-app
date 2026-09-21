@@ -37,10 +37,8 @@ PALETTE = {
 }
 
 HELP_LINES = [
-    "Tab boards · F2 contacts · type to send · /to NAME · /block /unblock /delete NAME",
-    "/radio on|off · /status · /contacts · /quit",
+    "1/2/3 talk as A/B/C · ←/→ switch contact · type + Enter sends · F2 all contacts · /quit leaves",
 ]
-
 
 class Tui:
     """Curses state: roster, target, log, input. Bus pumps events in."""
@@ -286,7 +284,16 @@ class Tui:
                 except curses.error:
                     pass
         # Input + help.
-
+        try:
+            stdscr.addstr(h - 2, 26, ("> " + self.input)[-(w - 27):], curses.color_pair(1))
+            stdscr.addstr(h - 1, 1, HELP_LINES[0][: w - 2], curses.color_pair(6))
+        except curses.error:
+            pass
+        try:
+            stdscr.move(h - 2, min(28 + len(self.input), w - 1))
+        except curses.error:
+            pass
+        stdscr.refresh()
 
 def _scan() -> dict[str, _boards.Board]:
     """Probe attached boards into serial-keyed map."""
@@ -351,6 +358,21 @@ def _run(stdscr: object, known: dict) -> int:
             board = tui.board()
             if board is not None and tui.names(board):
                 tui.picker = 0
+        elif key in (ord("1"), ord("2"), ord("3")):
+            want = "ABC"[key - ord("1")]
+            for i, s in enumerate(tui.order):
+                if (tui.known[s].label or "?") == want:
+                    tui.current = i
+                    break
+        elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+            board = tui.board()
+            if board is not None:
+                names = tui.names(board)
+                if names:
+                    step = 1 if key == curses.KEY_RIGHT else -1
+                    idx = (tui.contact_idx.get(board.serial, 0) + step) % len(names)
+                    tui.contact_idx[board.serial] = idx
+                    tui.targets[board.serial] = names[idx]
         elif key == 9:  # Tab: complete partial name, else cycle boards
             board = tui.board()
             frag = tui.input[3:] if tui.input.startswith("/to ") else tui.input
