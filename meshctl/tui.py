@@ -1,14 +1,17 @@
 """Terminal TUI for the mesh: board roster, contacts, live traffic, send box.
 
-Radio-shack logbook, not a chat app: left column is the station roster
-(boards by USB serial with label/image), center is the traffic log
-(inbound moss green, outbound amber, faults red), bottom is the key line.
+Chat console: left column is the station roster (boards by label), center
+is the traffic log (inbound moss green, outbound amber, faults red), top
+is the `BOARD → contact` conversation header, bottom is the input line.
 Boards attach on start and stay owned until quit; `/quit` detaches all.
 
-Keys: Tab cycles boards, F2 cycles contacts, `/to NAME` targets,
-`/block NAME` + `/unblock NAME` + `/delete NAME` manage slots,
-`/radio on|off`, `/status`, `/contacts`, `/quit`.
-Plain typing sends to the current target.
+Keys: Tab cycles boards (or completes a partial contact name), F2 opens
+the contact picker (Up/Down + Enter, Esc cancels), typing `/` opens the
+command palette (Up/Down + Enter), `/to NAME` targets, `/block NAME` +
+`/unblock NAME` + `/delete NAME` manage slots, `/radio on|off` (fixed
++2dBm/SF7/BW500 profile, display-only), `/pair offer|proof|confirm`
+exports a pairing record, `/debug` toggles raw-event view, `/status`,
+`/contacts`, `/quit`. Plain typing sends to the current target.
 """
 from __future__ import annotations
 
@@ -51,7 +54,9 @@ class Tui:
         self.contact_idx: dict[str, int] = {}
         self.log: list[tuple[str, str]] = []
         self.input = ""
-        self.status = "scanning…"
+        self.picker = -1
+        self.palette = -1
+        self.debug = False
         for serial, board in self.known.items():
             assert isinstance(board, _boards.Board)
             self.bus.attach(board.serial, board.device, board.label)
@@ -77,6 +82,20 @@ class Tui:
         names = self.names(board)
         idx = self.contact_idx.get(board.serial, 0) % max(len(names), 1)
         return names[idx] if names else ""
+
+    def complete(self, board: _boards.Board, frag: str) -> list[str]:
+        """Mapped names starting with `frag` (case-insensitive)."""
+        frag = frag.lower()
+        return [n for n in self.names(board) if n.lower().startswith(frag)]
+
+    def palette_items(self) -> list[str]:
+        """Slash commands for the inline palette."""
+        return [
+            "/to NAME", "/status", "/contacts", "/block NAME",
+            "/unblock NAME", "/delete NAME", "/radio on", "/radio off",
+            "/pair offer", "/pair proof", "/pair confirm", "/debug",
+            "/quit",
+        ]
 
     def say(self, text: str, style: str = "paper") -> None:
         """Append one log line, capped."""
@@ -109,7 +128,27 @@ class Tui:
                     except (ValueError, TypeError, OSError):
                         pass
             elif event.kind == "reply":
-                self.say(f"[{tag}] {event.text[:160]}", "dim")
+                try:
+                    import json as _json
+                    obj = _json.loads(event.text)
+                except ValueError:
+                    obj = {}
+                result = obj.get("result", {}) if isinstance(obj, dict) else {}
+                if isinstance(result, dict) and result.get("record_b64"):
+                    rec = result["record_b64"]
+                    self.say(f"[{tag}] pairing record ({len(rec)} chars):", "amber")
+                    self.say(rec[:120], "paper")
+                    if len(rec) > 120:
+                        self.say(rec[120:240], "paper")
+                    self.say("full text in history file; compare fingerprint aloud", "dim")
+                elif self.debug:
+                    self.say(f"[{tag}] reply: {event.text[:160]}", "dim")
+                elif "ACKNOWLEDGED" in event.text:
+                    self.say(f"[{tag}] acknowledged", "moss")
+                elif "UNCONFIRMED" in event.text:
+                    self.say(f"[{tag}] UNCONFIRMED (retries exhausted)", "fault")
+                else:
+                    self.say(f"[{tag}] {event.text[:160]}", "dim")
             elif event.kind == "error":
                 self.say(f"[{tag}] {event.text[:160]}", "fault")
             else:
@@ -178,9 +217,17 @@ class Tui:
         elif cmd in ("status", "contacts"):
             if board is not None:
                 self.bus.request(board.serial, cmd, None, timeout=10.0)
+        elif cmd == "debug":
+            self.debug = not self.debug
+            self.say(f"debug {'on' if self.debug else 'off'}", "amber")
+        elif cmd == "pair" and rest.strip() in ("offer", "proof", "confirm"):
+            if board is not None:
+                op = {"offer": "pair_offer", "proof": "pair_proof",
+                      "confirm": "pair_confirm"}[rest.strip()]
+                self.bus.request(board.serial, op, None, timeout=15.0)
+                self.say(f"pair {rest.strip()}: reply lands in log/history", "amber")
         else:
             self.say(f"unknown command /{cmd}", "fault")
-        return True
 
     def draw(self) -> None:
         """Paint roster, log, input. Plain curses, no flicker tricks."""
@@ -216,14 +263,28 @@ class Tui:
                 stdscr.addstr(1 + i, 26, text[: w - 27], curses.color_pair(styles.get(style, 1)))
             except curses.error:
                 pass
+        # Picker / palette popups above the input line.
+        row = h - 4
+        if tui.picker >= 0 and board is not None:
+            for i, name in enumerate(tui.names(board)):
+                if row - i < 1:
+                    break
+                try:
+                    stdscr.addstr(row - i, 26, f"{'▸' if i == tui.picker % max(len(tui.names(board)), 1) else ' '} {name}"[: w - 27],
+                                  curses.color_pair(3) if i == tui.picker % max(len(tui.names(board)), 1) else curses.color_pair(6))
+                except curses.error:
+                    pass
+        elif tui.palette >= 0:
+            items = [c for c in tui.palette_items() if tui.input[1:].lower() in c.lower()]
+            for i, item in enumerate(items[:8]):
+                if row - i < 1:
+                    break
+                try:
+                    stdscr.addstr(row - i, 26, f"{'▸' if i == tui.palette % max(len(items), 1) else ' '} {item}"[: w - 27],
+                                  curses.color_pair(3) if i == tui.palette % max(len(items), 1) else curses.color_pair(6))
+                except curses.error:
+                    pass
         # Input + help.
-        try:
-            stdscr.addstr(h - 2, 26, ("> " + self.input)[-(w - 27):], curses.color_pair(1))
-            stdscr.addstr(h - 1, 1, HELP_LINES[0][: w - 2], curses.color_pair(6))
-        except curses.error:
-            pass
-        stdscr.move(h - 2, min(28 + len(self.input), w - 1))
-        stdscr.refresh()
 
 
 def _scan() -> dict[str, _boards.Board]:
@@ -267,20 +328,51 @@ def _run(stdscr: object, known: dict) -> int:
         if key == -1:
             time.sleep(0.05)
             continue
+        if tui.picker >= 0:
+            board = tui.board()
+            names = tui.names(board) if board is not None else []
+            if key in (27,):  # Esc cancels
+                tui.picker = -1
+            elif key in (curses.KEY_UP,) and names:
+                tui.picker = (tui.picker - 1) % len(names)
+            elif key in (curses.KEY_DOWN,) and names:
+                tui.picker = (tui.picker + 1) % len(names)
+            elif key in (curses.KEY_ENTER, 10, 13) and board is not None and names:
+                name = names[tui.picker % len(names)]
+                tui.targets[board.serial] = name
+                tui.contact_idx[board.serial] = tui.picker % len(names)
+                tui.say(f"target: {name}", "amber")
+                tui.picker = -1
+            elif key in (curses.KEY_F2, 27):
+                tui.picker = -1
+            continue
         if key in (curses.KEY_F2,):
             board = tui.board()
-            if board is not None:
-                names = tui.names(board)
-                if names:
-                    idx = (tui.contact_idx.get(board.serial, 0) + 1) % len(names)
-                    tui.contact_idx[board.serial] = idx
-                    tui.targets[board.serial] = names[idx]
-        elif key == 9:  # Tab
-            if tui.order:
+            if board is not None and tui.names(board):
+                tui.picker = 0
+        elif key == 9:  # Tab: complete partial name, else cycle boards
+            board = tui.board()
+            frag = tui.input[3:] if tui.input.startswith("/to ") else tui.input
+            matches = tui.complete(board, frag.strip()) if board is not None and frag.strip() else []
+            if len(matches) == 1:
+                tui.input = ("/to " if tui.input.startswith("/") else "") + matches[0]
+                tui.picker = -1
+            elif matches:
+                tui.picker = 0
+                tui.say("Tab: " + ", ".join(matches), "dim")
+            elif tui.order:
                 tui.current = (tui.current + 1) % len(tui.order)
         elif key in (curses.KEY_BACKSPACE, 127, 8):
             tui.input = tui.input[:-1]
+            tui.palette = 0 if tui.input.startswith("/") else -1
         elif key in (curses.KEY_ENTER, 10, 13):
+            if tui.palette >= 0 and tui.input.startswith("/"):
+                items = [c for c in tui.palette_items() if tui.input[1:].lower() in c.lower()]
+                if items:
+                    tui.input = items[tui.palette % len(items)]
+                    tui.palette = -1
+                    continue
+            tui.palette = -1
             line = tui.input
             tui.input = ""
             if line.startswith("/"):
@@ -288,9 +380,18 @@ def _run(stdscr: object, known: dict) -> int:
             else:
                 tui.input = line
                 tui.send_current()
+        elif key in (curses.KEY_UP,) and tui.input.startswith("/"):
+            items = [c for c in tui.palette_items() if tui.input[1:].lower() in c.lower()]
+            if items:
+                tui.palette = (tui.palette - 1) % len(items) if tui.palette >= 0 else 0
+        elif key in (curses.KEY_DOWN,) and tui.input.startswith("/"):
+            items = [c for c in tui.palette_items() if tui.input[1:].lower() in c.lower()]
+            if items:
+                tui.palette = (tui.palette + 1) % len(items) if tui.palette >= 0 else 0
         elif 32 <= key <= 126:
             if len(tui.input) < 160:
                 tui.input += chr(key)
+            tui.palette = 0 if tui.input.startswith("/") else -1
     tui.bus.detach_all()
     return 0
 
