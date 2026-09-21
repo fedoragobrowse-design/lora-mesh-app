@@ -88,7 +88,6 @@ class EventBus:
                 self.events.put(BusEvent(serial, "error", "not attached"))
                 return
             link.commands.put((op, copied, time.monotonic() + timeout))
-
     def poll(self) -> list[BusEvent]:
         out = []
         while True:

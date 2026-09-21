@@ -57,6 +57,7 @@ class Tui:
         self.debug = False
         self.status = "scanning…"
         self.pending_sends: dict[tuple[str, str], tuple[str, int]] = {}
+        self.rooms: dict[tuple[str, str], list[tuple[str, str]]] = {}
         for serial, board in self.known.items():
             assert isinstance(board, _boards.Board)
             self.bus.attach(board.serial, board.device, board.label)
@@ -97,10 +98,14 @@ class Tui:
             "/quit",
         ]
 
-    def say(self, text: str, style: str = "paper") -> None:
-        """Append one log line, capped."""
-        self.log.append((style, text[:300]))
-        del self.log[:-500]
+    def room_key(self, serial: str, peer: str) -> tuple[str, str]:
+        return (serial, peer)
+
+    def room_msg(self, serial: str, peer: str, text: str, style: str) -> None:
+        """Append to the per-contact chatroom and the shared log."""
+        self.rooms.setdefault(self.room_key(serial, peer), []).append((style, text[:300]))
+        self.rooms[self.room_key(serial, peer)][:] = self.rooms[self.room_key(serial, peer)][-200:]
+        self.say(text, style)
 
     def pump(self) -> None:
         """Drain the bus into the log with contact names resolved."""
@@ -115,7 +120,7 @@ class Tui:
                     except (ValueError, OSError):
                         name = None
                 who = name or f"id{event.contact_id}"
-                self.say(f"[{tag} ← {who}] {event.text}", "moss")
+                self.room_msg(event.board, who, f"[{tag} ← {who}] {event.text}", "moss")
                 if board is not None:
                     try:
                         conn = _history.open_history(_local.history_path_for(board.device))
@@ -145,10 +150,11 @@ class Tui:
                     self.say(f"[{tag}] reply: {event.text[:160]}", "dim")
                 elif "ACKNOWLEDGED" in event.text:
                     self.pending_sends = {k: v for k, v in self.pending_sends.items() if k[0] != event.board}
-                    self.say(f"[{tag}] acknowledged", "moss")
                 elif "UNCONFIRMED" in event.text:
+                    for (s, text), (name, _c) in list(self.pending_sends.items()):
+                        if s == event.board:
+                            self.room_msg(s, name, f"[{tag}] UNCONFIRMED: {text}", "fault")
                     self.pending_sends = {k: v for k, v in self.pending_sends.items() if k[0] != event.board}
-                    self.say(f"[{tag}] UNCONFIRMED (retries exhausted)", "fault")
                 elif '"error":"BUSY"' in event.text.replace(" ", ""):
                     if not self.retry_send(event.board, event.text):
                         self.say(f"[{tag}] busy, retry from input", "fault")
@@ -196,7 +202,7 @@ class Tui:
         self.bus.request(board.serial, "send",
                          {"contact_id": cid, "text": text}, timeout=60.0)
         self.pending_sends[(board.serial, text)] = (name, 0)
-        self.say(f"[{board.label or '?'} → {name}] {text}", "amber")
+        self.room_msg(board.serial, name, f"[{board.label or '?'} → {name}] {text}", "amber")
         try:
             conn = _history.open_history(_local.history_path_for(board.device))
             try:
@@ -282,8 +288,9 @@ class Tui:
             stdscr.hline(h - 3, 25, curses.ACS_HLINE, w - 26)
         except curses.error:
             pass
-        visible = self.log[-(h - 5):]
-        styles = {"amber": 3, "moss": 4, "fault": 5, "paper": 1, "dim": 6}
+        key = self.room_key(board.serial, target) if board is not None and target else None
+        room = self.rooms.get(key, []) if key is not None else self.log
+        visible = room[-(h - 5):] if key is not None else self.log[-(h - 5):]
         for i, (style, text) in enumerate(visible):
             try:
                 stdscr.addstr(1 + i, 26, text[: w - 27], curses.color_pair(styles.get(style, 1)))
