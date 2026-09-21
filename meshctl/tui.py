@@ -227,6 +227,7 @@ class Tui:
                 self.say(f"pair {rest.strip()}: reply lands in log/history", "amber")
         else:
             self.say(f"unknown command /{cmd}", "fault")
+        return True
 
     def draw(self) -> None:
         """Paint roster, log, input. Plain curses, no flicker tricks."""
