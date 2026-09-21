@@ -57,6 +57,7 @@ class Tui:
         self.picker = -1
         self.palette = -1
         self.debug = False
+        self.status = "scanning…"
         for serial, board in self.known.items():
             assert isinstance(board, _boards.Board)
             self.bus.attach(board.serial, board.device, board.label)
@@ -265,23 +266,23 @@ class Tui:
                 pass
         # Picker / palette popups above the input line.
         row = h - 4
-        if tui.picker >= 0 and board is not None:
-            for i, name in enumerate(tui.names(board)):
+        if self.picker >= 0 and board is not None:
+            for i, name in enumerate(self.names(board)):
                 if row - i < 1:
                     break
                 try:
-                    stdscr.addstr(row - i, 26, f"{'▸' if i == tui.picker % max(len(tui.names(board)), 1) else ' '} {name}"[: w - 27],
-                                  curses.color_pair(3) if i == tui.picker % max(len(tui.names(board)), 1) else curses.color_pair(6))
+                    stdscr.addstr(row - i, 26, f"{'▸' if i == self.picker % max(len(self.names(board)), 1) else ' '} {name}"[: w - 27],
+                                  curses.color_pair(3) if i == self.picker % max(len(self.names(board)), 1) else curses.color_pair(6))
                 except curses.error:
                     pass
-        elif tui.palette >= 0:
-            items = [c for c in tui.palette_items() if tui.input[1:].lower() in c.lower()]
+        elif self.palette >= 0:
+            items = [c for c in self.palette_items() if self.input[1:].lower() in c.lower()]
             for i, item in enumerate(items[:8]):
                 if row - i < 1:
                     break
                 try:
-                    stdscr.addstr(row - i, 26, f"{'▸' if i == tui.palette % max(len(items), 1) else ' '} {item}"[: w - 27],
-                                  curses.color_pair(3) if i == tui.palette % max(len(items), 1) else curses.color_pair(6))
+                    stdscr.addstr(row - i, 26, f"{'▸' if i == self.palette % max(len(items), 1) else ' '} {item}"[: w - 27],
+                                  curses.color_pair(3) if i == self.palette % max(len(items), 1) else curses.color_pair(6))
                 except curses.error:
                     pass
         # Input + help.
