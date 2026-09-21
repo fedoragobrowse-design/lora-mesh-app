@@ -358,7 +358,7 @@ def _run(stdscr: object, known: dict) -> int:
             board = tui.board()
             if board is not None and tui.names(board):
                 tui.picker = 0
-        elif key in (ord("1"), ord("2"), ord("3")):
+        elif key in (ord("1"), ord("2"), ord("3")) and not tui.input:
             want = "ABC"[key - ord("1")]
             for i, s in enumerate(tui.order):
                 if (tui.known[s].label or "?") == want:
