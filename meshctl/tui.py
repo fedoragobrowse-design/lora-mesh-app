@@ -170,8 +170,6 @@ class Tui:
                 else:
                     op = "contact_delete" if cmd == "delete" else cmd
                     self.bus.request(board.serial, op, {"contact_id": cid}, timeout=10.0)
-                    if cmd == "delete":
-                        _contacts.drop_contact(board.serial, rest.strip(), cid)
                     self.say(f"{cmd}: {rest.strip()} (id {cid})", "amber")
         elif cmd == "radio" and rest.strip() in ("on", "off"):
             if board is not None:
@@ -305,4 +303,8 @@ def cmd_tui(args: argparse.Namespace) -> int:
         return 1
     import functools
 
-    return curses.wrapper(functools.partial(_run, known=known))
+    try:
+        return curses.wrapper(functools.partial(_run, known=known))
+    except KeyboardInterrupt:
+        # Ctrl-C is a normal exit from the console, not a crash.
+        return 0

@@ -260,16 +260,6 @@ class MeshChat(tk.Tk):
                 names.append(label)
         return names
 
-    def _slot_for_label(self, board: _boards.Board, name: str) -> int | None:
-        """Firmware slot for `name`: serial-keyed mapping only.
-
-        Fingerprints cannot identify peers (per-pairing secrets, no
-        label linkage over USB), so unmapped names resolve only through a
-        fresh `pair import --name`. Never guesses, never transmits.
-        """
-        if not _contacts.valid_name(name):
-            return None
-        return _contacts.resolve_contact(board.serial, name)
 
     def _attach(self) -> None:
         board = self._board()
@@ -308,12 +298,6 @@ class MeshChat(tk.Tk):
             cid = _contacts.resolve_contact(board.serial, name)
         except (ValueError, OSError):
             cid = None
-        if cid is None:
-            # Local mapping missed (stale path, renamed entry): fall back to
-            # the board's live firmware slots by label fingerprint is wrong;
-            # match the peer label via contacts list when the target is a
-            # known node label. Firmware slots stay authoritative.
-            cid = self._slot_for_label(board, name)
         params: dict = {"text": text}
         if cid is not None:
             params["contact_id"] = cid
@@ -440,12 +424,6 @@ class MeshChat(tk.Tk):
         if not messagebox.askyesno("Delete contact", f"Delete '{name}' (id {cid})? Frees the slot."):
             return
         self.bus.request(board.serial, "contact_delete", {"contact_id": cid}, timeout=10.0)
-        # Mapping cleanup happens on the confirmed reply path; also drop
-        # locally so a lost reply cannot resurrect a stale name.
-        try:
-            _contacts.drop_contact(board.serial, name, cid)
-        except (ValueError, OSError) as exc:
-            self._dbg(f"delete mapping cleanup failed: {exc}")
 
     # ---- pairing --------------------------------------------------------------
     def _pair_export(self, kind: str) -> None:

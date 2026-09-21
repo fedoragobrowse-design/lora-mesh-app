@@ -217,10 +217,10 @@ def fingerprint_of_record_b64(record_b64: str) -> str:
 
 
 def fingerprint_of_offer(record_b64: str) -> str:
-    """Short hex of an offer's Ed25519 key (bytes 2..10) for display."""
-    import binascii
+    """Peer identity fingerprint: SHA256(Ed25519 public key), first 16 hex chars."""
+    import hashlib
 
     raw = decode_record(record_b64)
     if inspect_record(raw) != "offer":
         return ""
-    return binascii.hexlify(raw[2:10]).decode("ascii")
+    return hashlib.sha256(raw[2:34]).hexdigest()[:16]
