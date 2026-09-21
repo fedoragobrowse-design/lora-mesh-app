@@ -94,6 +94,7 @@ def probe(board: Board, timeout: float = 5.0) -> Board:
     if not reply.get("ok"):
         board.error = f"firmware error: {reply.get('error', 'UNKNOWN')}"
         return board
+    result = reply.get("result", {})
     board.label = str(result.get("label", ""))
     board.image = str(result.get("image", ""))
     board.firmware_version = str(result.get("firmware_version", ""))
