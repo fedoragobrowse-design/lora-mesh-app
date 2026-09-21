@@ -154,15 +154,23 @@ class Tui:
                 elif self.debug:
                     self.say(f"[{tag}] reply: {event.text[:160]}", "dim")
                 elif "ACKNOWLEDGED" in event.text:
+                    for (s, text), (name, _c) in list(self.pending_sends.items()):
+                        if s == event.board:
+                            self.room_msg(s, name, f"  ✓ sent · {text}", "dim")
                     self.pending_sends = {k: v for k, v in self.pending_sends.items() if k[0] != event.board}
                 elif "UNCONFIRMED" in event.text:
                     for (s, text), (name, _c) in list(self.pending_sends.items()):
                         if s == event.board:
-                            self.room_msg(s, name, f"[{tag}] UNCONFIRMED: {text}", "fault")
+                            self.room_msg(s, name, f"  ✗ not sent (no ACK) · {text}", "fault")
                     self.pending_sends = {k: v for k, v in self.pending_sends.items() if k[0] != event.board}
                 elif '"error":"BUSY"' in event.text.replace(" ", ""):
+                    for (s, text), (name, count) in list(self.pending_sends.items()):
+                        if s == event.board:
+                            self.room_msg(s, name, f"  … busy, retry {count + 1}/2 · {text}", "dim")
                     if not self.retry_send(event.board, event.text):
-                        self.say(f"[{tag}] busy, retry from input", "fault")
+                        for (s, text), (name, _c) in list(self.pending_sends.items()):
+                            if s == event.board:
+                                self.room_msg(s, name, f"  ✗ busy, gave up · {text}", "fault")
             elif event.kind == "error":
                 self.say(f"[{tag}] {event.text[:160]}", "fault")
             else:
