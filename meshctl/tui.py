@@ -56,6 +56,7 @@ class Tui:
         self.palette = -1
         self.debug = False
         self.status = "scanning…"
+        self.pending_sends: dict[tuple[str, str], tuple[str, int]] = {}
         for serial, board in self.known.items():
             assert isinstance(board, _boards.Board)
             self.bus.attach(board.serial, board.device, board.label)
@@ -143,15 +144,36 @@ class Tui:
                 elif self.debug:
                     self.say(f"[{tag}] reply: {event.text[:160]}", "dim")
                 elif "ACKNOWLEDGED" in event.text:
+                    self.pending_sends = {k: v for k, v in self.pending_sends.items() if k[0] != event.board}
                     self.say(f"[{tag}] acknowledged", "moss")
                 elif "UNCONFIRMED" in event.text:
+                    self.pending_sends = {k: v for k, v in self.pending_sends.items() if k[0] != event.board}
                     self.say(f"[{tag}] UNCONFIRMED (retries exhausted)", "fault")
-                else:
-                    self.say(f"[{tag}] {event.text[:160]}", "dim")
+                elif '"error":"BUSY"' in event.text.replace(" ", ""):
+                    if not self.retry_send(event.board, event.text):
+                        self.say(f"[{tag}] busy, retry from input", "fault")
             elif event.kind == "error":
                 self.say(f"[{tag}] {event.text[:160]}", "fault")
             else:
                 self.say(f"[{tag}] {event.text[:160]}", "dim")
+
+    def retry_send(self, serial: str, reply_text: str) -> bool:
+        """Re-resolve and re-request a BUSY-stale send, max 2 attempts."""
+        for (s, text), (name, count) in list(self.pending_sends.items()):
+            if s != serial:
+                continue
+            if count >= 2:
+                del self.pending_sends[(s, text)]
+                return False
+            cid = _contacts.resolve_contact(serial, name)
+            if cid is None:
+                del self.pending_sends[(s, text)]
+                return False
+            self.pending_sends[(s, text)] = (name, count + 1)
+            self.bus.request(serial, "send", {"contact_id": cid, "text": text}, timeout=60.0)
+            self.say(f"[retry {count + 1}] {name}: {text}", "amber")
+            return True
+        return False
 
     def send_current(self) -> None:
         """Send the input line to the current target."""
@@ -173,6 +195,7 @@ class Tui:
             return
         self.bus.request(board.serial, "send",
                          {"contact_id": cid, "text": text}, timeout=60.0)
+        self.pending_sends[(board.serial, text)] = (name, 0)
         self.say(f"[{board.label or '?'} → {name}] {text}", "amber")
         try:
             conn = _history.open_history(_local.history_path_for(board.device))
@@ -234,8 +257,8 @@ class Tui:
         stdscr = self.stdscr
         h, w = stdscr.getmaxyx()
         stdscr.erase()
-        # Roster column (left, 24 wide).
-        for i, serial in enumerate(self.order[: h - 4]):
+        # Roster column (left, 24 wide), firmware version below.
+        for i, serial in enumerate(self.order[: h - 5]):
             board = self.known.get(serial)
             label = (board.label if board else serial[:8]) or serial[:8]
             mark = "●" if i == self.current % len(self.order) else "○"
@@ -246,6 +269,10 @@ class Tui:
                               else curses.color_pair(6))
             except curses.error:
                 pass
+        try:
+            stdscr.addstr(min(len(self.order) + 1, h - 3), 1, "fw 0.1.0"[:23], curses.color_pair(6))
+        except curses.error:
+            pass
         # Traffic log (center).
         board = self.board()
         target = self.target(board) if board is not None else ""
