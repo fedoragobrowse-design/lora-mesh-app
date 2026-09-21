@@ -257,22 +257,21 @@ class Tui:
         stdscr = self.stdscr
         h, w = stdscr.getmaxyx()
         stdscr.erase()
-        # Roster column (left, 24 wide), firmware version below.
-        for i, serial in enumerate(self.order[: h - 5]):
+        # Roster column (left, 24 wide), per-board version below label.
+        for i, serial in enumerate(self.order[: h - 6]):
             board = self.known.get(serial)
             label = (board.label if board else serial[:8]) or serial[:8]
             mark = "●" if i == self.current % len(self.order) else "○"
             line = f"{mark} {label}"[:23]
             try:
-                stdscr.addstr(1 + i, 1, line,
+                stdscr.addstr(1 + i * 2, 1, line,
                               curses.color_pair(3) if i == self.current % len(self.order)
                               else curses.color_pair(6))
+                ver = f"  v{board.firmware_version}"[:23] if board is not None and board.firmware_version else ""
+                if ver:
+                    stdscr.addstr(2 + i * 2, 1, ver, curses.color_pair(6))
             except curses.error:
                 pass
-        try:
-            stdscr.addstr(min(len(self.order) + 1, h - 3), 1, "fw 0.1.0"[:23], curses.color_pair(6))
-        except curses.error:
-            pass
         # Traffic log (center).
         board = self.board()
         target = self.target(board) if board is not None else ""
